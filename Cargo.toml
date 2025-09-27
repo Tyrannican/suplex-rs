@@ -1,11 +1,11 @@
 [package]
 name = "suplex"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Graham Keenan <graham.keenan@outlook.com>"]
-repository = "https://github.com/Tyrannican/suplex"
-homepage = "https://github.com/Tyrannican/suplex"
+repository = "https://github.com/Tyrannican/suplex-rs"
+homepage = "https://github.com/Tyrannican/suplex-rs"
 description = "Request-Response wrapper over Crossbeam channels"
 keywords = ["channel", "mpmc", "crossbeam", "message"]
 categories = ["algorithms", "concurrency", "data-structures"]
