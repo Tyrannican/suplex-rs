@@ -1,4 +1,4 @@
-//! Request-Response wrapper over Crossbeam channels
+//! Request-Response wrapper over MPMC Crossbeam channels
 //!
 //! This crate is designed for situations where you want to have request-response channels shared
 //! between two or more processes using the [`crossbeam_channel`] crate.
