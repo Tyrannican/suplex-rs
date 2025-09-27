@@ -27,11 +27,11 @@
 //! This crate allows for you to create these channel pairs so that you can share them between
 //! processes easily.
 
-pub use crossbeam_channel::{Iter, Receiver, Sender, TryIter};
-use crossbeam_channel::{
-    RecvError, RecvTimeoutError, SendError, SendTimeoutError, TryRecvError, TrySendError, bounded,
-    unbounded,
+pub use crossbeam_channel::{
+    Iter, Receiver, RecvError, RecvTimeoutError, SendError, SendTimeoutError, Sender, TryIter,
+    TryRecvError, TrySendError,
 };
+use crossbeam_channel::{bounded, unbounded};
 use std::time::{Duration, Instant};
 
 /// Channel split containing the `Left` channels ([`Sender<L>`] & [`Receiver<R>`])
@@ -138,6 +138,41 @@ impl<L, R> Bridge<L, R> {
 
     /// Create two pairs of channels with the `Left` side being bound to hold `cap` messages at a
     /// time and the `Right` side having no capacity restraints
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::left_bounded(1);
+    ///
+    /// // Returns immediately as there is enough space in the channel
+    /// bridge.send_to_right(1).unwrap();
+    ///
+    /// let bridge_clone = bridge.clone();
+    /// thread::spawn(move || {
+    ///     // This blocks the thread as the channel is full
+    ///     // It will complete only when the first message is received
+    ///     bridge_clone.send_to_right(2);
+    /// });
+    ///
+    /// thread::sleep(Duration::from_secs(1));
+    /// assert_eq!(bridge.recv_from_left(), Ok(1));
+    /// assert_eq!(bridge.recv_from_left(), Ok(2));
+    ///
+    /// for i in 0..5 {
+    ///     // This should not block as it is unbounded
+    ///     bridge.send_to_left(i).unwrap();
+    /// }
+    ///
+    /// for i in 0..5 {
+    ///     // Does not block as unbounded
+    ///     assert_eq!(bridge.recv_from_right(), Ok(i));
+    /// }
+    ///
+    /// ```
     pub fn left_bounded(cap: usize) -> Self {
         let (left_tx, right_rx) = bounded::<L>(cap);
         let (right_tx, left_rx) = unbounded::<R>();
@@ -150,6 +185,41 @@ impl<L, R> Bridge<L, R> {
 
     /// Create two pairs of channels with the `Right` side being bound to hold `cap` messages at a
     /// time and the `Left` side having no capacity restraints
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::right_bounded(1);
+    ///
+    /// // Returns immediately as there is enough space in the channel
+    /// bridge.send_to_left(1).unwrap();
+    ///
+    /// let bridge_clone = bridge.clone();
+    /// thread::spawn(move || {
+    ///     // This blocks the thread as the channel is full
+    ///     // It will complete only when the first message is received
+    ///     bridge_clone.send_to_left(2);
+    /// });
+    ///
+    /// thread::sleep(Duration::from_secs(1));
+    /// assert_eq!(bridge.recv_from_right(), Ok(1));
+    /// assert_eq!(bridge.recv_from_right(), Ok(2));
+    ///
+    /// for i in 0..5 {
+    ///     // This should not block as it is unbounded
+    ///     bridge.send_to_right(i).unwrap();
+    /// }
+    ///
+    /// for i in 0..5 {
+    ///     // Does not block as unbounded
+    ///     assert_eq!(bridge.recv_from_left(), Ok(i));
+    /// }
+    ///
+    /// ```
     pub fn right_bounded(cap: usize) -> Self {
         let (left_tx, right_rx) = unbounded::<L>();
         let (right_tx, left_rx) = bounded::<R>(cap);
@@ -161,27 +231,118 @@ impl<L, R> Bridge<L, R> {
     }
 
     /// Send a message from the `Left` channel to the `Right` channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(1);
+    /// assert_eq!(bridge.send_to_right(1), Ok(()));
+    ///
+    /// let bridge_clone = bridge.clone();
+    /// thread::spawn(move || {
+    ///     assert_eq!(bridge_clone.recv_from_left(), Ok(1));
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// assert_eq!(bridge.send_to_right(2), Ok(()));
+    /// assert_eq!(bridge.recv_from_left(), Ok(2));
+    /// ```
     pub fn send_to_right(&self, msg: L) -> Result<(), SendError<L>> {
         self.left.0.send(msg)
     }
 
     /// Send a message from the `Right` channel to the `Left` channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(1);
+    /// assert_eq!(bridge.send_to_left(1), Ok(()));
+    ///
+    /// let bridge_clone = bridge.clone();
+    /// thread::spawn(move || {
+    ///     assert_eq!(bridge_clone.recv_from_right(), Ok(1));
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// assert_eq!(bridge.send_to_left(2), Ok(()));
+    /// assert_eq!(bridge.recv_from_right(), Ok(2));
+    /// ```
     pub fn send_to_left(&self, msg: R) -> Result<(), SendError<R>> {
         self.right.0.send(msg)
     }
 
     /// Attempts to send a message from the `Left` channel to the `Right` channel without blocking
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::{Bridge, TrySendError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(1);
+    ///
+    /// assert_eq!(bridge.try_send_to_right(1), Ok(()));
+    /// assert_eq!(bridge.try_send_to_right(2), Err(TrySendError::Full(2)));
+    /// ```
     pub fn try_send_to_right(&self, msg: L) -> Result<(), TrySendError<L>> {
         self.left.0.try_send(msg)
     }
 
     /// Attempts to send a message from the `Right` channel to the `Left` channel without blocking
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::{Bridge, TrySendError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(1);
+    ///
+    /// assert_eq!(bridge.try_send_to_left(1), Ok(()));
+    /// assert_eq!(bridge.try_send_to_left(2), Err(TrySendError::Full(2)));
+    /// ```
     pub fn try_send_to_left(&self, msg: R) -> Result<(), TrySendError<R>> {
         self.right.0.try_send(msg)
     }
 
     /// Waits for a message to be sent into the `Left` channel to the `Right` channel for a limited
     /// time
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::{Bridge, SendTimeoutError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(0);
+    ///
+    /// let bridge_clone = bridge.clone();
+    /// thread::spawn(move || {
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     assert_eq!(bridge_clone.recv_from_left(), Ok(2));
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// assert_eq!(
+    ///     bridge.send_to_right_timeout(1, Duration::from_millis(500)),
+    ///     Err(SendTimeoutError::Timeout(1)),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     bridge.send_to_right_timeout(2, Duration::from_secs(1)),
+    ///     Ok(())
+    /// );
+    /// ```
     pub fn send_to_right_timeout(
         &self,
         msg: L,
@@ -192,6 +353,33 @@ impl<L, R> Bridge<L, R> {
 
     /// Waits for a message to be sent into the `Right` channel to the `Left` channel for a limited
     /// time
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::{Bridge, SendTimeoutError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(0);
+    ///
+    /// let bridge_clone = bridge.clone();
+    /// thread::spawn(move || {
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     assert_eq!(bridge_clone.recv_from_right(), Ok(2));
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// assert_eq!(
+    ///     bridge.send_to_left_timeout(1, Duration::from_millis(500)),
+    ///     Err(SendTimeoutError::Timeout(1)),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     bridge.send_to_left_timeout(2, Duration::from_secs(1)),
+    ///     Ok(())
+    /// );
+    /// ```
     pub fn send_to_left_timeout(
         &self,
         msg: R,
@@ -202,6 +390,36 @@ impl<L, R> Bridge<L, R> {
 
     /// Waits for a message to be sent into the `Left` channel to the `Right` channel until a given
     /// deadline
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::{Duration, Instant};
+    /// use suplex::{Bridge, SendTimeoutError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(0);
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     assert_eq!(bridge_clone.recv_from_left(), Ok(2));
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// let now = Instant::now();
+    ///
+    /// assert_eq!(
+    ///     bridge.send_to_right_deadline(1, now + Duration::from_millis(500)),
+    ///     Err(SendTimeoutError::Timeout(1)),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     bridge.send_to_right_deadline(2, now + Duration::from_millis(1500)),
+    ///     Ok(())
+    /// );
+    ///
+    /// ```
     pub fn send_to_right_deadline(
         &self,
         msg: L,
@@ -212,6 +430,36 @@ impl<L, R> Bridge<L, R> {
 
     /// Waits for a message to be sent into the `Right` channel to the `Left` channel until a given
     /// deadline
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::{Duration, Instant};
+    /// use suplex::{Bridge, SendTimeoutError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(0);
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     assert_eq!(bridge_clone.recv_from_right(), Ok(2));
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// let now = Instant::now();
+    ///
+    /// assert_eq!(
+    ///     bridge.send_to_left_deadline(1, now + Duration::from_millis(500)),
+    ///     Err(SendTimeoutError::Timeout(1)),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     bridge.send_to_left_deadline(2, now + Duration::from_millis(1500)),
+    ///     Ok(())
+    /// );
+    ///
+    /// ```
     pub fn send_to_left_deadline(
         &self,
         msg: R,
@@ -220,69 +468,349 @@ impl<L, R> Bridge<L, R> {
         self.right.0.send_deadline(msg, deadline)
     }
 
-    /* Receives */
     /// Receive a message sent from the `Left` channel on the `Right` channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::{Bridge, RecvError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     bridge_clone.send_to_right(5).unwrap();
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// assert_eq!(bridge.recv_from_left(), Ok(5));
+    /// ```
     pub fn recv_from_left(&self) -> Result<L, RecvError> {
         self.right.1.recv()
     }
 
     /// Receive a message sent from the `Right` channel on the `Left` channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::{Bridge, RecvError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     bridge_clone.send_to_left(5).unwrap();
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// assert_eq!(bridge.recv_from_right(), Ok(5));
+    /// ```
     pub fn recv_from_right(&self) -> Result<R, RecvError> {
         self.left.1.recv()
     }
 
     /// Attempts to receive a message sent from the `Left` channel on the `Right` channel without
     /// blocking
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::{Bridge, TryRecvError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert_eq!(bridge.try_recv_from_left(), Err(TryRecvError::Empty));
+    ///
+    /// bridge.send_to_right(5).unwrap();
+    /// assert_eq!(bridge.try_recv_from_left(), Ok(5));
+    /// ```
     pub fn try_recv_from_left(&self) -> Result<L, TryRecvError> {
         self.right.1.try_recv()
     }
 
     /// Attempts to receive a message sent from the `Right` channel on the `Left` channel without
     /// blocking
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::{Bridge, TryRecvError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert_eq!(bridge.try_recv_from_right(), Err(TryRecvError::Empty));
+    ///
+    /// bridge.send_to_left(5).unwrap();
+    /// assert_eq!(bridge.try_recv_from_right(), Ok(5));
+    /// ```
     pub fn try_recv_from_right(&self) -> Result<R, TryRecvError> {
         self.left.1.try_recv()
     }
 
     /// Waits for a message to be received on the `Right` channel from the `Left` channel for a
     /// limited time
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::{Bridge, RecvTimeoutError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     bridge_clone.send_to_right(5).unwrap();
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// assert_eq!(
+    ///     bridge.recv_from_left_timeout(Duration::from_millis(500)),
+    ///     Err(RecvTimeoutError::Timeout),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     bridge.recv_from_left_timeout(Duration::from_secs(1)),
+    ///     Ok(5)
+    /// );
+    /// ```
     pub fn recv_from_left_timeout(&self, timeout: Duration) -> Result<L, RecvTimeoutError> {
         self.right.1.recv_timeout(timeout)
     }
 
     /// Waits for a message to be received on the `Left` channel from the `Right` channel for a
     /// limited time
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::{Bridge, RecvTimeoutError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     bridge_clone.send_to_left(5).unwrap();
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// assert_eq!(
+    ///     bridge.recv_from_right_timeout(Duration::from_millis(500)),
+    ///     Err(RecvTimeoutError::Timeout),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     bridge.recv_from_right_timeout(Duration::from_secs(1)),
+    ///     Ok(5)
+    /// );
+    /// ```
     pub fn recv_from_right_timeout(&self, timeout: Duration) -> Result<R, RecvTimeoutError> {
         self.left.1.recv_timeout(timeout)
     }
 
     /// Waits for a message to be received on the `Right` channel from the `Left` channel until a
     /// given deadline
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::{Instant, Duration};
+    /// use suplex::{Bridge, RecvTimeoutError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     bridge_clone.send_to_right(5).unwrap();
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// let now = Instant::now();
+    ///
+    /// assert_eq!(
+    ///     bridge.recv_from_left_deadline(now + Duration::from_millis(500)),
+    ///     Err(RecvTimeoutError::Timeout),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     bridge.recv_from_left_deadline(now + Duration::from_millis(1500)),
+    ///     Ok(5)
+    /// );
+    /// ```
     pub fn recv_from_left_deadline(&self, deadline: Instant) -> Result<L, RecvTimeoutError> {
         self.right.1.recv_deadline(deadline)
     }
 
     /// Waits for a message to be received on the `Left` channel from the `Right` channel until a
     /// given deadline
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::{Instant, Duration};
+    /// use suplex::{Bridge, RecvTimeoutError};
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     bridge_clone.send_to_left(5).unwrap();
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// let now = Instant::now();
+    ///
+    /// assert_eq!(
+    ///     bridge.recv_from_right_deadline(now + Duration::from_millis(500)),
+    ///     Err(RecvTimeoutError::Timeout),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     bridge.recv_from_right_deadline(now + Duration::from_millis(1500)),
+    ///     Ok(5)
+    /// );
+    /// ```
     pub fn recv_from_right_deadline(&self, deadline: Instant) -> Result<R, RecvTimeoutError> {
         self.left.1.recv_deadline(deadline)
     }
 
-    /// A blocking iterator over messages in the `Left` receiver channel
+    /// A blocking iterator over messages in the `Left` receiver channel (i.e. iterator over the
+    /// `R` messages received by the `Left`)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     bridge_clone.send_to_left(1).unwrap();
+    ///     bridge_clone.send_to_left(2).unwrap();
+    ///     bridge_clone.send_to_left(3).unwrap();
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// let left_receiver_iter = bridge.left_receiver_iter();
+    ///
+    /// // Do what you want with the iter (this will endlessly block);
+    /// ```
     pub fn left_receiver_iter(&self) -> Iter<'_, R> {
         self.left.1.iter()
     }
 
-    /// A blocking iterator over messages in the `Right` receiver channel
+    /// A blocking iterator over messages in the `Right` receiver channel (i.e. iterator over the
+    /// `L` messages received by the `Right`)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     bridge_clone.send_to_right(1).unwrap();
+    ///     bridge_clone.send_to_right(2).unwrap();
+    ///     bridge_clone.send_to_right(3).unwrap();
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// let right_receiver_iter = bridge.right_receiver_iter();
+    /// // Do what you want with the iter (this will endlessly block);
+    /// ```
     pub fn right_receiver_iter(&self) -> Iter<'_, L> {
         self.right.1.iter()
     }
 
-    /// A non-blocking iterator over messages in the `Left` receiver channel
+    /// A non-blocking iterator over messages in the `Left` receiver channel (i.e. iterator over
+    /// the `R` messages received by the `Left`)
+    ///
+    /// Each call to `next` returns a message if there is one ready to be received. This never
+    /// blocks waiting for the next message
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     bridge_clone.send_to_left(1).unwrap();
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     bridge_clone.send_to_left(2).unwrap();
+    ///     thread::sleep(Duration::from_secs(2));
+    ///     bridge_clone.send_to_left(3).unwrap();
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// thread::sleep(Duration::from_secs(2));
+    ///
+    /// // Collect all messages from the channel without blocking.
+    /// // The third message hasn't been sent tyet so we'll collect only the first one
+    /// let v: Vec<_> = bridge.left_receiver_try_iter().collect();
+    ///
+    /// assert_eq!(v, [1, 2]);
+    /// ```
     pub fn left_receiver_try_iter(&self) -> TryIter<'_, R> {
         self.left.1.try_iter()
     }
 
-    /// A non-blocking iterator over messages in the `Right` receiver channel
+    /// A non-blocking iterator over messages in the `Right` receiver channel (i.e. iterator over
+    /// the `R` messages send by the `Left`)
+    ///
+    /// Each call to `next` returns a message if there is one ready to be received. This never
+    /// blocks waiting for the next message
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::thread;
+    /// use std::time::Duration;
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let bridge_clone = bridge.clone();
+    ///
+    /// thread::spawn(move || {
+    ///     bridge_clone.send_to_right(1).unwrap();
+    ///     thread::sleep(Duration::from_secs(1));
+    ///     bridge_clone.send_to_right(2).unwrap();
+    ///     thread::sleep(Duration::from_secs(2));
+    ///     bridge_clone.send_to_right(3).unwrap();
+    ///     drop(bridge_clone);
+    /// });
+    ///
+    /// thread::sleep(Duration::from_secs(2));
+    ///
+    /// // Collect all messages from the channel without blocking.
+    /// // The third message hasn't been sent tyet so we'll collect only the first one
+    /// let v: Vec<_> = bridge.right_receiver_try_iter().collect();
+    ///
+    /// assert_eq!(v, [1, 2]);
+    /// ```
     pub fn right_receiver_try_iter(&self) -> TryIter<'_, L> {
         self.right.1.try_iter()
     }
@@ -290,6 +818,21 @@ impl<L, R> Bridge<L, R> {
     /// The capacity of the `Left` sender channel
     ///
     /// Returns [`None`] if the channel is unbounded
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert_eq!(bridge.left_sender_capacity(), None);
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(5);
+    /// assert_eq!(bridge.left_sender_capacity(), Some(5));
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(0);
+    /// assert_eq!(bridge.left_sender_capacity(), Some(0));
+    /// ```
     pub fn left_sender_capacity(&self) -> Option<usize> {
         self.left.0.capacity()
     }
@@ -297,36 +840,125 @@ impl<L, R> Bridge<L, R> {
     /// The capacity of the `Right` sender channel
     ///
     /// Returns [`None`] if the channel is unbounded
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert_eq!(bridge.right_sender_capacity(), None);
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(5);
+    /// assert_eq!(bridge.right_sender_capacity(), Some(5));
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(0);
+    /// assert_eq!(bridge.right_sender_capacity(), Some(0));
+    /// ```
     pub fn right_sender_capacity(&self) -> Option<usize> {
         self.right.0.capacity()
     }
 
     /// Returns `true` if the `Left` sender channel is empty
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert!(bridge.is_left_sender_empty());
+    ///
+    /// bridge.send_to_right(0).unwrap();
+    /// assert!(!bridge.is_left_sender_empty());
+    /// ```
     pub fn is_left_sender_empty(&self) -> bool {
         self.left.0.is_empty()
     }
 
     /// Returns `true` if the `Right` sender channel is empty
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert!(bridge.is_right_sender_empty());
+    ///
+    /// bridge.send_to_left(0).unwrap();
+    /// assert!(!bridge.is_right_sender_empty());
+    /// ```
     pub fn is_right_sender_empty(&self) -> bool {
         self.right.0.is_empty()
     }
 
     /// Returns `true` if the `Left` sender channel is full
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(1);
+    /// assert!(!bridge.is_left_sender_full());
+    ///
+    /// bridge.send_to_right(0).unwrap();
+    /// assert!(bridge.is_left_sender_full());
+    /// ```
     pub fn is_left_sender_full(&self) -> bool {
         self.left.0.is_full()
     }
 
     /// Returns `true` if the `Right` sender channel is full
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(1);
+    /// assert!(!bridge.is_right_sender_full());
+    ///
+    /// bridge.send_to_left(0).unwrap();
+    /// assert!(bridge.is_right_sender_full());
+    /// ```
     pub fn is_right_sender_full(&self) -> bool {
         self.right.0.is_full()
     }
 
     /// Returns the number of message in the `Left` sender channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert_eq!(bridge.left_sender_len(), 0);
+    ///
+    /// bridge.send_to_right(1).unwrap();
+    /// bridge.send_to_right(2).unwrap();
+    ///
+    /// assert_eq!(bridge.left_sender_len(), 2);
+    /// ```
     pub fn left_sender_len(&self) -> usize {
         self.left.0.len()
     }
 
     /// Returns the number of message in the `Right` sender channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert_eq!(bridge.right_sender_len(), 0);
+    ///
+    /// bridge.send_to_left(1).unwrap();
+    /// bridge.send_to_left(2).unwrap();
+    ///
+    /// assert_eq!(bridge.right_sender_len(), 2);
+    /// ```
     pub fn right_sender_len(&self) -> usize {
         self.right.0.len()
     }
@@ -334,6 +966,21 @@ impl<L, R> Bridge<L, R> {
     /// Returns the capacity of the `Left` receiver channel
     ///
     /// Returns [`None`] if the channel is unbounded
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert_eq!(bridge.left_receiver_capacity(), None);
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(5);
+    /// assert_eq!(bridge.left_receiver_capacity(), Some(5));
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(0);
+    /// assert_eq!(bridge.left_receiver_capacity(), Some(0));
+    /// ```
     pub fn left_receiver_capacity(&self) -> Option<usize> {
         self.right.1.capacity()
     }
@@ -341,58 +988,259 @@ impl<L, R> Bridge<L, R> {
     /// Returns the capacity of the `Right` receiver channel
     ///
     /// Returns [`None`] if the channel is unbounded
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert_eq!(bridge.right_receiver_capacity(), None);
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(5);
+    /// assert_eq!(bridge.right_receiver_capacity(), Some(5));
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(0);
+    /// assert_eq!(bridge.right_receiver_capacity(), Some(0));
+    /// ```
     pub fn right_receiver_capacity(&self) -> Option<usize> {
         self.left.1.capacity()
     }
 
     /// Returns the number of messages in the `Left` receiver channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert_eq!(bridge.left_receiver_len(), 0);
+    ///
+    /// bridge.send_to_right(1).unwrap();
+    /// bridge.send_to_right(2).unwrap();
+    /// assert_eq!(bridge.left_receiver_len(), 2);
+    /// ```
     pub fn left_receiver_len(&self) -> usize {
         self.right.1.len()
     }
 
     /// Returns the number of messages in the `Right` receiver channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert_eq!(bridge.right_receiver_len(), 0);
+    ///
+    /// bridge.send_to_left(1).unwrap();
+    /// bridge.send_to_left(2).unwrap();
+    /// assert_eq!(bridge.right_receiver_len(), 2);
+    /// ```
     pub fn right_receiver_len(&self) -> usize {
         self.left.1.len()
     }
 
     /// Returns `true` if the `Left` receiver channel is empty
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert!(bridge.is_left_receiver_empty());
+    ///
+    /// bridge.send_to_right(0).unwrap();
+    /// assert!(!bridge.is_left_receiver_empty());
+    /// ```
     pub fn is_left_receiver_empty(&self) -> bool {
         self.right.1.is_empty()
     }
 
     /// Returns `true` if the `Right` receiver channel is empty
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert!(bridge.is_right_receiver_empty());
+    ///
+    /// bridge.send_to_left(0).unwrap();
+    /// assert!(!bridge.is_right_receiver_empty());
+    /// ```
     pub fn is_right_receiver_empty(&self) -> bool {
         self.left.1.is_empty()
     }
 
     /// Returns `true` if the `Left` receiver channel is full
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(1);
+    /// assert!(!bridge.is_left_receiver_full());
+    ///
+    /// bridge.send_to_right(0).unwrap();
+    /// assert!(bridge.is_left_receiver_full());
+    /// ```
     pub fn is_left_receiver_full(&self) -> bool {
         self.right.1.is_full()
     }
 
     /// Returns `true` if the `Right` receiver channel is full
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::bounded(1);
+    /// assert!(!bridge.is_right_receiver_full());
+    ///
+    /// bridge.send_to_left(0).unwrap();
+    /// assert!(bridge.is_right_receiver_full());
+    /// ```
     pub fn is_right_receiver_full(&self) -> bool {
         self.left.1.is_full()
     }
 
     /// Returns `true` if the given sender belongs to the `Left` sender channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let left_sender = bridge.left_sender();
+    /// assert!(bridge.same_channel_left_sender(&left_sender));
+    ///
+    /// let another_bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert!(!another_bridge.same_channel_left_sender(&left_sender));
+    /// ```
     pub fn same_channel_left_sender(&self, other: &Sender<L>) -> bool {
         self.left.0.same_channel(other)
     }
 
     /// Returns `true` if the given sender belongs to the `Right` sender channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let right_sender = bridge.right_sender();
+    /// assert!(bridge.same_channel_right_sender(&right_sender));
+    ///
+    /// let another_bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert!(!another_bridge.same_channel_right_sender(&right_sender));
+    /// ```
     pub fn same_channel_right_sender(&self, other: &Sender<R>) -> bool {
         self.right.0.same_channel(other)
     }
 
     /// Returns `true` if the given receiver belongs to the `Left` receiver channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let left_receiver = bridge.left_receiver();
+    /// assert!(bridge.same_channel_left_receiver(&left_receiver));
+    ///
+    /// let another_bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert!(!another_bridge.same_channel_left_receiver(&left_receiver));
+    /// ```
     pub fn same_channel_left_receiver(&self, other: &Receiver<R>) -> bool {
         self.left.1.same_channel(other)
     }
 
     /// Returns `true` if the given receiver belongs to the `Right` receiver channel
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let right_receiver = bridge.right_receiver();
+    /// assert!(bridge.same_channel_right_receiver(&right_receiver));
+    ///
+    /// let another_bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// assert!(!another_bridge.same_channel_right_receiver(&right_receiver));
+    /// ```
     pub fn same_channel_right_receiver(&self, other: &Receiver<L>) -> bool {
         self.right.1.same_channel(other)
+    }
+
+    /// Returns a clone of the sender on the `Left`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let left_sender = bridge.left_sender();
+    /// assert!(bridge.same_channel_left_sender(&left_sender));
+    /// ```
+    pub fn left_sender(&self) -> Sender<L> {
+        self.left.0.clone()
+    }
+
+    /// Returns a clone of the sender on the `Right`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let right_sender = bridge.right_sender();
+    /// assert!(bridge.same_channel_right_sender(&right_sender));
+    /// ```
+    pub fn right_sender(&self) -> Sender<R> {
+        self.right.0.clone()
+    }
+
+    /// Returns a clone of the receiver on the `Left`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let left_receiver = bridge.left_receiver();
+    /// assert!(bridge.same_channel_left_receiver(&left_receiver));
+    /// ```
+    pub fn left_receiver(&self) -> Receiver<R> {
+        self.left.1.clone()
+    }
+
+    /// Returns a clone of the receiver on the `Right`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use suplex::Bridge;
+    ///
+    /// let bridge: Bridge<usize, usize> = Bridge::unbounded();
+    /// let right_receiver = bridge.right_receiver();
+    /// assert!(bridge.same_channel_right_receiver(&right_receiver));
+    /// ```
+    pub fn right_receiver(&self) -> Receiver<L> {
+        self.right.1.clone()
     }
 }
 
