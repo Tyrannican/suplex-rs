@@ -9,6 +9,7 @@ homepage = "https://github.com/Tyrannican/suplex"
 description = "Request-Response wrapper over Crossbeam channels"
 keywords = ["channel", "mpmc", "crossbeam", "message"]
 categories = ["algorithms", "concurrency", "data-structures"]
+readme = "README.md"
 
 [dependencies]
 crossbeam-channel = "0.5.15"
