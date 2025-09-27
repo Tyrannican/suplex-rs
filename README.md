@@ -46,11 +46,11 @@ fn main() {
 This crate revolves around the concept of a `Left` channel pair and a `Right` channel pair.
 You select one process to be the `Left` and another process to be the `Right`.
 
-The `Left` Process holds a [`Sender<L>`] type and a [`Receiver<R>`] type that sends messages of
+The `Left` Process holds a `Sender<L>` type and a `Receiver<R>` type that sends messages of
 type `L` (the `Left` process message type) and receives messages of type `R` (the `Right`
 process message type).
 
-The `Right` Process is the inverse which holds a [`Sender<R>`] type and a [`Receiver<L>`] type
+The `Right` Process is the inverse which holds a `Sender<R>` type and a `Receiver<L>` type
 that sends messages of type `R` (the `Right` process message type) and receives messages of
 type `L` (the `Left` process message type).
 
