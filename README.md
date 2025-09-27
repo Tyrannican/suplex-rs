@@ -3,7 +3,7 @@
 Request/Response MPMC channels powered by Crossbeam!
 
 This crate is designed for situations where you want to have request-response channels shared
-between two or more processes using the [`crossbeam_channel`] crate.
+between two or more processes using the [crossbeam_channel](https://github.com/crossbeam-rs/crossbeam/tree/master/crossbeam-channel).
 
 To add it to your project:
 
