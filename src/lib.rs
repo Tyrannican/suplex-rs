@@ -26,6 +26,19 @@
 //!
 //! This crate allows for you to create these channel pairs so that you can share them between
 //! processes easily.
+//!
+//! # Too Complicated?
+//!
+//! If the `Left` and `Right` concept is confusing, you don't have to use the [`Bridge`] at all and
+//! can create queue pairs with the following functions:
+//!
+//! * [`unbounded_bridge`] for Unbounded channel pairs
+//! * [`bounded_bridge`] for Bounded channel pairs
+//! * [`left_bounded_bridge`] for the [`Sender<L>`] and [`Receiver<L>`] to be bound and the [`Sender<R>`] and [`Receiver<R>`] to be unbound
+//! * [`right_bounded_bridge`] for the [`Sender<R>`] and [`Receiver<R>`] to be bound and the [`Sender<L>`] and [`Receiver<L>`] to be unbound
+//!
+//! This allows you to have full control of the channels and you can implement your logic as you
+//! please.
 
 pub use crossbeam_channel::{
     Iter, Receiver, RecvError, RecvTimeoutError, SendError, SendTimeoutError, Sender, TryIter,
@@ -1245,6 +1258,30 @@ impl<L, R> Bridge<L, R> {
 }
 
 /// Creates two pairs of unbounded channels for the `Left` and `Right` types
+///
+/// This returns a [`LeftChannelSplit<L, R>`] and [`RightChannelSplit<L, R>`] which hold a sender
+/// and a receiver of the opposite type
+///
+/// # Examples
+///
+/// ```rust
+/// use std::thread;
+/// use suplex::unbounded_bridge;
+///
+/// let (left, right) = unbounded_bridge::<usize, usize>();
+///
+/// // The `Right` process
+/// thread::spawn(move || {
+///     let (right_sender, left_receiver) = right;
+///     assert_eq!(left_receiver.recv(), Ok(1));
+///     right_sender.send(5).unwrap();
+/// });
+///
+/// // The `Left` process
+/// let (left_sender, right_receiver) = left;
+/// left_sender.send(1).unwrap();
+/// assert_eq!(right_receiver.recv(), Ok(5));
+/// ```
 pub fn unbounded_bridge<L, R>() -> (LeftChannelSplit<L, R>, RightChannelSplit<L, R>) {
     let (left_tx, right_rx) = unbounded::<L>();
     let (right_tx, left_rx) = unbounded::<R>();
@@ -1253,6 +1290,33 @@ pub fn unbounded_bridge<L, R>() -> (LeftChannelSplit<L, R>, RightChannelSplit<L,
 }
 
 /// Creates two pairs of bounded channels for the `Left` and `Right` types
+///
+/// The [`Sender<L>`] and [`Receiver<L>`] are bound by the `left_cap`
+/// The [`Sender<R>`] and [`Receiver<R>`] are bound by the `right_cap`
+///
+/// This returns a [`LeftChannelSplit<L, R>`] and [`RightChannelSplit<L, R>`] which hold a sender
+/// and a receiver of the opposite type
+///
+/// # Examples
+///
+/// ```rust
+/// use std::thread;
+/// use suplex::bounded_bridge;
+///
+/// let (left, right) = bounded_bridge::<usize, usize>(1, 1);
+///
+/// // The `Right` process
+/// thread::spawn(move || {
+///     let (right_sender, left_receiver) = right;
+///     assert_eq!(left_receiver.recv(), Ok(1));
+///     right_sender.send(5).unwrap();
+/// });
+///
+/// // The `Left` process
+/// let (left_sender, right_receiver) = left;
+/// left_sender.send(1).unwrap();
+/// assert_eq!(right_receiver.recv(), Ok(5));
+/// ```
 pub fn bounded_bridge<L, R>(
     left_cap: usize,
     right_cap: usize,
@@ -1263,9 +1327,34 @@ pub fn bounded_bridge<L, R>(
     ((left_tx, left_rx), (right_tx, right_rx))
 }
 
-/// Creates two pairs of channels for the `Left` and `Right` types.
+/// Creates two pairs of channels for the `Left` and `Right` types with the `Left` side bounded.
 ///
-/// The `Left` side is bounded to hold `cap` messages whilst the `Right` side is unbounded
+/// The [`Sender<L>`] and [`Receiver<L>`] are bound by the `cap` and the [`Sender<R>`] and
+/// [`Receiver<R>`] is unbound
+///
+/// This returns a [`LeftChannelSplit<L, R>`] and [`RightChannelSplit<L, R>`] which hold a sender
+/// and a receiver of the opposite type
+///
+/// # Examples
+///
+/// ```rust
+/// use std::thread;
+/// use suplex::left_bounded_bridge;
+///
+/// let (left, right) = left_bounded_bridge::<usize, usize>(1);
+///
+/// // The `Right` process
+/// thread::spawn(move || {
+///     let (right_sender, left_receiver) = right;
+///     assert_eq!(left_receiver.recv(), Ok(1));
+///     right_sender.send(5).unwrap();
+/// });
+///
+/// // The `Left` process
+/// let (left_sender, right_receiver) = left;
+/// left_sender.send(1).unwrap();
+/// assert_eq!(right_receiver.recv(), Ok(5));
+/// ```
 pub fn left_bounded_bridge<L, R>(cap: usize) -> (LeftChannelSplit<L, R>, RightChannelSplit<L, R>) {
     let (left_tx, right_rx) = bounded::<L>(cap);
     let (right_tx, left_rx) = unbounded::<R>();
@@ -1273,9 +1362,34 @@ pub fn left_bounded_bridge<L, R>(cap: usize) -> (LeftChannelSplit<L, R>, RightCh
     ((left_tx, left_rx), (right_tx, right_rx))
 }
 
-/// Creates two pairs of channels for the `Left` and `Right` types.
+/// Creates two pairs of channels for the `Left` and `Right` types with the `Right` side bounded.
 ///
-/// The `Right` side is bounded to hold `cap` messages whilst the `Left` side is unbounded
+/// The [`Sender<R>`] and [`Receiver<R>`] are bound by the `cap` and the [`Sender<L>`] and
+/// [`Receiver<L>`] is unbound
+///
+/// This returns a [`LeftChannelSplit<L, R>`] and [`RightChannelSplit<L, R>`] which hold a sender
+/// and a receiver of the opposite type
+///
+/// # Examples
+///
+/// ```rust
+/// use std::thread;
+/// use suplex::right_bounded_bridge;
+///
+/// let (left, right) = right_bounded_bridge::<usize, usize>(1);
+///
+/// // The `Right` process
+/// thread::spawn(move || {
+///     let (right_sender, left_receiver) = right;
+///     assert_eq!(left_receiver.recv(), Ok(1));
+///     right_sender.send(5).unwrap();
+/// });
+///
+/// // The `Left` process
+/// let (left_sender, right_receiver) = left;
+/// left_sender.send(1).unwrap();
+/// assert_eq!(right_receiver.recv(), Ok(5));
+/// ```
 pub fn right_bounded_bridge<L, R>(cap: usize) -> (LeftChannelSplit<L, R>, RightChannelSplit<L, R>) {
     let (left_tx, right_rx) = unbounded::<L>();
     let (right_tx, left_rx) = bounded::<R>(cap);
